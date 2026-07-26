@@ -1,34 +1,35 @@
-import 'package:expense_tracker/widgets/expenses_list/expenses_list.dart';
 import 'package:expense_tracker/model/expense.dart';
-import 'package:expense_tracker/widgets/newexpense.dart';
-import 'package:flutter/material.dart';
+import 'package:expense_tracker/utils/csv_export.dart';
+import 'package:expense_tracker/widgets/expenses_list/expenses_list.dart';
+import 'package:expense_tracker/widgets/new_expense_sheet.dart';
+import 'package:expense_tracker/widgets/summary_card.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/material.dart';
 
 class Expenses extends StatefulWidget {
   const Expenses({super.key});
+
   @override
-  State<StatefulWidget> createState() {
-    return _Expensestate();
-  }
+  State<Expenses> createState() => _ExpensesState();
 }
 
-class _Expensestate extends State<Expenses> {
-  final List<Expense> _registeredexpsense = [
+class _ExpensesState extends State<Expenses> {
+  final List<Expense> _expenses = [
     Expense(
-      title: 'cinema',
+      title: 'Cinema',
       amount: 20,
       date: DateTime.now(),
       category: Category.entertainment,
     ),
     Expense(
-      title: 'course',
+      title: 'Flutter Course',
       amount: 15,
       date: DateTime.now(),
       category: Category.study,
     ),
   ];
 
-  final Map<Category, Color> categoryColors = {
+  final Map<Category, Color> _categoryColors = {
     Category.place: Colors.blue,
     Category.food: Colors.red,
     Category.travel: Colors.green,
@@ -36,102 +37,167 @@ class _Expensestate extends State<Expenses> {
     Category.study: Colors.purple,
   };
 
-  List<PieChartSectionData> getPieSections() {
+  // ── Chart ──────────────────────────────────────────────────────────────────
+
+  List<PieChartSectionData> _getPieSections() {
     return Category.values
         .map((category) {
-          final bucket = expensebucket.getcategory(
-            _registeredexpsense,
-            category,
-          );
-          if (bucket.totalsum == 0) return null;
+          final bucket = ExpenseBucket.forCategory(_expenses, category);
+          if (bucket.totalSum == 0) return null;
           return PieChartSectionData(
-            value: bucket.totalsum,
-            title: '${category.name}\n\$${bucket.totalsum.toStringAsFixed(0)}',
-            color: categoryColors[category],
-            radius: 100,
-            titleStyle: TextStyle(
-              fontSize: 12,
+            value: bucket.totalSum,
+            title:
+                '${category.name}\n\$${bucket.totalSum.toStringAsFixed(0)}',
+            color: _categoryColors[category],
+            radius: 90,
+            titleStyle: const TextStyle(
+              fontSize: 11,
               fontWeight: FontWeight.bold,
               color: Colors.white,
             ),
           );
         })
-        .where((section) => section != null)
-        .cast<PieChartSectionData>()
+        .whereType<PieChartSectionData>()
         .toList();
   }
 
-  void _openadd() {
+  // ── Sheet helpers ──────────────────────────────────────────────────────────
+
+  void _openAddSheet() {
     showModalBottomSheet(
       isScrollControlled: true,
+      useSafeArea: true,
       context: context,
-      builder: (ctxt) => Newexpense(addexpense: addnewexpense),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => NewExpenseSheet(onSaveExpense: _addExpense),
     );
   }
 
-  void addnewexpense(Expense ex) {
-    setState(() {
-      _registeredexpsense.add(ex);
-    });
-  }
-
-  void removeexpense(Expense ex) {
-    final exindex = _registeredexpsense.indexOf(ex);
-    setState(() {
-      _registeredexpsense.remove(ex);
-    });
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        duration: Duration(seconds: 4),
-        persist: false,
-        content: Text("expense deleted"),
-        action: SnackBarAction(
-          label: "UNDO",
-          onPressed: () {
-            setState(() {
-              _registeredexpsense.insert(exindex, ex);
-            });
-          },
-        ),
+  void _openEditSheet(Expense expense) {
+    showModalBottomSheet(
+      isScrollControlled: true,
+      useSafeArea: true,
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => NewExpenseSheet(
+        onSaveExpense: _updateExpense,
+        existingExpense: expense,
       ),
     );
   }
+
+  // ── CRUD ───────────────────────────────────────────────────────────────────
+
+  void _addExpense(Expense expense) {
+    setState(() => _expenses.add(expense));
+  }
+
+  void _updateExpense(Expense updated) {
+    setState(() {
+      final index = _expenses.indexWhere((e) => e.id == updated.id);
+      if (index != -1) _expenses[index] = updated;
+    });
+  }
+
+  void _removeExpense(Expense expense) {
+    final index = _expenses.indexOf(expense);
+    setState(() => _expenses.remove(expense));
+
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 4),
+          content: const Text('Expense deleted'),
+          action: SnackBarAction(
+            label: 'UNDO',
+            onPressed: () =>
+                setState(() => _expenses.insert(index, expense)),
+          ),
+        ),
+      );
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    Widget maincontent = Center(
-      child: Text("no expense found start adding some"),
-    );
-
-    if (_registeredexpsense.isNotEmpty) {
-      maincontent = ExpensesList(
-        expenses: _registeredexpsense,
-        expenseremover: removeexpense,
-      );
-    }
+    final sections = _getPieSections();
 
     return Scaffold(
       appBar: AppBar(
-        title: Text("EXPENSE TRACKER"),
-        actions: [IconButton(onPressed: _openadd, icon: Icon(Icons.add))],
+        title: const Text('EXPENSE TRACKER'),
+        actions: [
+          // Export CSV
+          IconButton(
+            tooltip: 'Export CSV',
+            icon: const Icon(Icons.download_outlined),
+            onPressed: () => exportToCsv(context, _expenses),
+          ),
+          // Add expense
+          IconButton(
+            tooltip: 'Add expense',
+            icon: const Icon(Icons.add),
+            onPressed: _openAddSheet,
+          ),
+        ],
       ),
       body: Column(
         children: [
+          // ── Pie chart ────────────────────────────────────────────────────
           SizedBox(
-            height: 300,
+            height: 260,
             width: double.infinity,
-            child: getPieSections().isEmpty
-                ? Center(child: Text("no data to display"))
+            child: sections.isEmpty
+                ? const Center(child: Text('No data to display'))
                 : PieChart(
                     PieChartData(
                       sectionsSpace: 2,
-                      centerSpaceRadius: 40,
-                      sections: getPieSections(),
+                      centerSpaceRadius: 36,
+                      sections: sections,
                     ),
                   ),
           ),
-          Expanded(child: maincontent),
+
+          // ── Summary card ─────────────────────────────────────────────────
+          SummaryCard(expenses: _expenses),
+
+          // ── List hint ────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Row(
+              children: [
+                Text(
+                  '${_expenses.length} expense${_expenses.length == 1 ? '' : 's'}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const Spacer(),
+                Text(
+                  '← swipe to delete   swipe → to edit',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Expenses list ────────────────────────────────────────────────
+          Expanded(
+            child: _expenses.isEmpty
+                ? const Center(
+                    child: Text('No expenses yet — tap + to add one!'),
+                  )
+                : ExpensesList(
+                    expenses: _expenses,
+                    onRemoveExpense: _removeExpense,
+                    onEditExpense: _openEditSheet,
+                  ),
+          ),
         ],
       ),
     );
